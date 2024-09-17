@@ -1,0 +1,6 @@
+uploads
+venv
+.env*
+.vscode
+parsed*
+__pycache__
