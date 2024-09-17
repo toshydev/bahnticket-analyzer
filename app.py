@@ -7,84 +7,83 @@ from helpers.validation import allowed_file
 from helpers.csv_output import create_csv
 from helpers.excel_output import create_excel
 
-# Initialize Flask
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit
 CORS(app)
+app.secret_key = 'your_secret_key_here'
 
-# Directory to temporarily save uploaded files
+
 UPLOAD_FOLDER = './uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 @app.route('/upload', methods=['POST'])
 def upload_files_and_parse():
-    # Get the list of uploaded files
-    files = request.files.getlist('files')
-    print(f"Received {len(files)} files")
-    print(f"Files: {files}")
+    parsed_results = session.get('parsed_results')
+    if not parsed_results:
+        session['parsed_results'] = []
 
-    if not files:
-        return jsonify({'error': 'No files uploaded'}), 400
+    print(f"Request: {request.files.keys()}")
 
-    parsed_results = []
+    uploaded_file = request.files['files']
+    file_bytes = uploaded_file.read()
 
-    for file in files:
-        # Ensure the file is a valid PDF based on the file name, mimetype, and magic number
-        if file and allowed_file(file):
-            print(f"Processing file: {file.filename}")
-            try:
-                # Save the file temporarily
-                filename = secure_filename(file.filename)
-                file_path = os.path.join(UPLOAD_FOLDER, filename)
-                file.save(file_path)
-                print(f"Saved file to: {file_path}")
+    with open(os.path.join(UPLOAD_FOLDER, uploaded_file.filename), 'wb') as f:
+        f.write(file_bytes)
+        # check if the newwly created file is a valid PDF
+        if allowed_file(uploaded_file):
+            return jsonify({'message': 'File uploaded successfully'}), 200
 
-                # Parse the PDF using your parsing logic
-                with open(file_path, 'rb') as pdf_file:
-                    print(f"Parsing {filename}")
-                    parsed_data = parse_pdf(pdf_file)
-                    print(f"Parsed data: {parsed_data}")
-
-                # Append parsed data to results
-                if isinstance(parsed_data, dict):
-                    parsed_results.append({
-                        'filename': filename,
-                        'parsed_data': parsed_data
-                    })
-                else:
-                    parsed_results.append({
-                        'filename': filename + "-1",
-                        'parsed_data': parsed_data[0]
-                    })
-                    parsed_results.append({
-                        'filename': filename + "-2",
-                        'parsed_data': parsed_data[1]
-                    })
-
-                # Remove the file after processing
-                #os.remove(file_path)
-                #print(f"Deleted {file_path}")
-
-            except Exception as e:
-                return jsonify({'error': f"Error parsing {filename}: {str(e)}"}), 500
-        else:
-            return jsonify({'error': f'Invalid file format for {file.filename}. Only PDF allowed'}), 400
-
-    # Store parsed results in the session
-    session['parsed_results'] = parsed_results
-
-    return jsonify({'parsed_results': parsed_results})
+    os.remove(os.path.join(UPLOAD_FOLDER, uploaded_file.filename))
+    print(f"Deleted {os.path.join(UPLOAD_FOLDER, uploaded_file.filename)}")
+    return jsonify({'error': 'Invalid file format. Only PDF allowed'}), 400
 
 
 @app.route('/generate-output', methods=['POST'])
 def generate_output():
     output_type = request.json.get('output_type', 'csv')
-    parsed_results = session.get('parsed_results')
+    parsed_results = []
 
-    if not parsed_results:
-        return jsonify({'error': 'No parsed results found in session'}), 400
+    files = [file for file in os.listdir(UPLOAD_FOLDER) if os.path.isfile(os.path.join(UPLOAD_FOLDER, file))]
+    print(f"Files in upload folder: {files}")
+    if not files:
+        return jsonify({'error': 'No files found in upload folder'}), 400
+
+    for file in files:
+        # Ensure the file is a valid PDF based on the file name, mimetype, and magic number
+        if file:
+            file_path = os.path.join(UPLOAD_FOLDER, file)
+            try:
+                # Parse the PDF using your parsing logic
+                with open(file_path, 'rb') as pdf_file:
+                    print(f"Processing file: {pdf_file}")
+                    if allowed_file(pdf_file):
+                        parsed_data = parse_pdf(pdf_file)
+                        print(f"Parsed data: {parsed_data}")
+
+                    else:
+                        return jsonify({'error': f'Invalid file format for {file_path}. Only PDF allowed'}), 400
+
+                # Append parsed data to results
+                if isinstance(parsed_data, dict):
+                    parsed_results.append({
+                        'filename': file,
+                        'parsed_data': parsed_data
+                    })
+                else:
+                    parsed_results.append({
+                        'filename': file + "-1",
+                        'parsed_data': parsed_data[0]
+                    })
+                    parsed_results.append({
+                        'filename': file + "-2",
+                        'parsed_data': parsed_data[1]
+                    })
+                
+                os.remove(file_path)
+                print(f"Deleted {file_path}")
+
+            except Exception as e:
+                return jsonify({'error': f"Error parsing {file_path}: {str(e)}"}), 500
 
     # Generate the output file based on requested format
     if output_type == 'csv':
